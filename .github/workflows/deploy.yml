@@ -1,0 +1,51 @@
+name: Deploy site to S3
+
+# Runs every time files are pushed to the main branch.
+# You can also run it by hand from the Actions tab (Run workflow).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Sign in to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Copy the site into the S3 bucket
+        run: |
+          aws s3 sync . "s3://${{ secrets.S3_BUCKET }}" \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "README.md"
+
+      - name: Fix the web manifest file type
+        run: |
+          aws s3 cp \
+            "s3://${{ secrets.S3_BUCKET }}/images/site.webmanifest" \
+            "s3://${{ secrets.S3_BUCKET }}/images/site.webmanifest" \
+            --metadata-directive REPLACE \
+            --content-type "application/manifest+json"
+
+      - name: Clear the CloudFront cache
+        env:
+          DIST: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          if [ -n "$DIST" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "$DIST" \
+              --paths "/*"
+          else
+            echo "No CLOUDFRONT_DISTRIBUTION_ID secret set. Skipping cache clear."
+            echo "www.mettapersonalchef.com may serve the old version for a while."
+          fi
